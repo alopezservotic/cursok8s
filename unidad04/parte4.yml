@@ -1,0 +1,30 @@
+---
+
+apiVersion: v1
+kind: Namespace
+metadata:
+  labels:
+    name: hotels-testing
+  name: hotels-testing
+
+---
+
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: hotel-report
+  namespace: hotels-testing
+  labels:
+    app: hotel-report
+    type: report
+spec:
+  schedule: "0 2 * * *"
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          restartPolicy: OnFailure
+          containers:
+          - name: hotel-report
+            image: ghcr.io/go-elevate/k8s4arch-hotels-backend:slim
+            command: [ "python", "report.py" ]

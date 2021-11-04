@@ -1,0 +1,231 @@
+---
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: backend-config
+  namespace: hotels
+data:
+  DB_PATH: '/db/hotels.json'
+  DB_TABLE: 'hotels'
+
+---
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: frontend-config
+  namespace: hotels
+data:
+  HOTELS_API_HOST: 'http://api-hotels.internal.itrip.io'
+
+---
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: backend
+  namespace: hotels
+  labels: 
+    app: backend
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: backend
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 25%
+      maxSurge: 25%
+  template:
+    metadata:
+      labels:
+        app: backend
+    spec:
+      initContainers:
+        - name: migrations
+          image: ghcr.io/go-elevate/k8s4arch-hotels-backend:stable
+          resources:
+            requests:
+              memory: "128Mi"
+              cpu: "100m"
+          envFrom:
+            - configMapRef:
+                name: backend-config                          
+          command: ["python"]
+          args: ["migrations.py"]
+          volumeMounts:
+            - name: db
+              mountPath: /db/
+      containers:
+        - name: backend
+          image: ghcr.io/go-elevate/k8s4arch-hotels-backend:stable
+          resources:
+            requests:
+              memory: "128Mi"
+              cpu: "100m"
+          ports:
+            - containerPort: 5000
+              name: backend
+          envFrom:
+            - configMapRef:
+                name: backend-config
+          volumeMounts:
+            - name: db
+              mountPath: /db/                
+          livenessProbe:
+            httpGet:
+              path: /status
+              port: backend
+            failureThreshold: 2
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /status
+              port: backend
+            failureThreshold: 2
+            periodSeconds: 10
+          startupProbe:
+            httpGet:
+              path: /status
+              port: backend
+            failureThreshold: 30
+            periodSeconds: 20
+      volumes:
+        - name: db
+          emptyDir: {}
+
+---
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: frontend
+  namespace: hotels
+  labels: 
+    app: frontend
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: frontend
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 25%
+      maxSurge: 25%
+  template:
+    metadata:
+      labels:
+        app: frontend
+    spec:
+      containers:
+        - name: frontend
+          image: ghcr.io/go-elevate/k8s4arch-hotels-frontend:stable
+          resources:
+            requests:
+              memory: "128Mi"
+              cpu: "100m"
+          ports:
+            - containerPort: 80
+              name: frontend
+          envFrom:
+            - configMapRef:
+                name: frontend-config
+          livenessProbe:
+            httpGet:
+              path: /
+              port: frontend
+            failureThreshold: 2
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /
+              port: frontend
+            failureThreshold: 2
+            periodSeconds: 10
+          startupProbe:
+            httpGet:
+              path: /
+              port: frontend
+            failureThreshold: 30
+            periodSeconds: 20
+
+---
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: service-frontend
+  namespace: hotels
+spec:
+  type: ClusterIP
+  selector:
+    app: frontend
+  ports:
+    - protocol: TCP
+      name: http
+      port: 80
+      targetPort: 80
+
+---
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: service-backend
+  namespace: hotels
+spec:
+  type: ClusterIP
+  selector:
+    app: backend
+  ports:
+    - protocol: TCP
+      name: http
+      port: 80
+      targetPort: 5000
+
+---
+
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: ingress-frontend
+  namespace: hotels
+  annotations:
+    kubernetes.io/ingress.class: public
+spec:
+  rules:
+  - host: awesome-hotels.internal.itrip.io
+    http:
+      paths:
+      - backend:
+          service:
+            name: service-frontend
+            port:
+              number: 80
+        path: /
+        pathType: Prefix
+
+---
+
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: ingress-backend
+  namespace: hotels
+  annotations:
+    kubernetes.io/ingress.class: public
+spec:
+  rules:
+  - host: api-hotels.internal.itrip.io
+    http:
+      paths:
+      - backend:
+          service:
+            name: service-backend
+            port:
+              number: 80
+        path: /hotels
+        pathType: Exact
